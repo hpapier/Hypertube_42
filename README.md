@@ -14,8 +14,6 @@ We have programmed from scratch the torrent client implementing (download torren
 - http://www.bittorrent.org/beps/bep_0000.html
 - http://www.bittorrent.org/beps/bep_0015.html
 
-I have done completely by myself the Golang API (Manage movies (search, movie page, list categories...), user(oauth...), comments...), the script to populate the movie database in Golang (download files, parse, scrape websites and save in the database) and done a big part of the front in VueJS.
-
 ## Features
 
 ### Profile
