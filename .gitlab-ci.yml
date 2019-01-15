@@ -1,0 +1,157 @@
+variables:
+    DOCKER_HOST: "tcp://localhost:2375"
+    JWT_SECRET: "abcd"
+    CONTAINER_APACHE_IMAGE: "git.harknet.ml:5005/becrespi/hypertube/apache2:$CI_COMMIT_SHA"
+    CONTAINER_TORRENT_API_IMAGE: "git.harknet.ml:5005/becrespi/hypertube/torrent-api:$CI_COMMIT_SHA"
+    CONTAINER_MAIN_API_IMAGE: "git.harknet.ml:5005/becrespi/hypertube/main-api:$CI_COMMIT_SHA"
+    MONGO_DB_NAME: "hypertube"
+    MONGO_DB_HOST: "mongodb-hypertube"
+    API_DOMAIN_NAME: "https://hypertube.harknet.ml"
+    FRONT_DOMAIN_NAME: "https://hypertube.harknet.ml"
+    GPLUS_SECRET: "_bD5gKmPa9f3jPn2J_GaKlRY"
+    GPLUS_KEY: "931898589601-ifkb8jhk0mqfngn9u0kp05bmf4mknp3u.apps.googleusercontent.com"
+    API42_KEY: "e9dec8a5cceef845f9889743034fbe281ada47ddea9a8eab6886e61bf89fecf1"
+    API42_SECRET: "a35e421650f5b4acae183352b8bc171c388966fd9666b5549ef1b7686a55b1c1"
+    FACEBOOK_KEY: "\"198736144271708\""
+    FACEBOOK_SECRET: "da4fbccfa48bad2bcd219d94e6e7859e"
+    MJ_APIKEY_PUBLIC: "ad7babe2df4e233602765689ba815076"
+    MJ_APIKEY_PRIVATE: "b4afc284c71e90c1666ef22419bbfad0"
+    SESSION_SECRET: "helloworld"
+    TMDB_APIKEY: "c42cafad195c9a8e22f45a21a1c301de"
+
+buildWebServer:
+    stage: build
+    image: docker:latest
+    services:
+        - docker:dind
+    script: 
+        - apk add --update nodejs nodejs-npm
+        - npm i  --prefix ./front/
+        - npm run build  --prefix ./front/
+        - mkdir -p ./webServer/App/front
+        - mv ./front/dist/* ./webServer/App/front
+        - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN git.harknet.ml:5005
+        - docker build --build-arg FRONT_DOMAIN_NAME --pull -t $CONTAINER_APACHE_IMAGE ./webServer/
+        - docker push $CONTAINER_APACHE_IMAGE
+    only:
+     changes:
+      - webServer/*/*
+      - front/**/**/**/*
+      - deployWebServer.yml
+
+buildTorrentApi:
+    stage: build
+    image: docker:latest
+    services:
+        - docker:dind
+    script: 
+        - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN git.harknet.ml:5005
+        - docker build --pull -t $CONTAINER_TORRENT_API_IMAGE ./torrentApiNode/
+        - docker push $CONTAINER_TORRENT_API_IMAGE
+    only:
+     changes:
+      - torrentApiNode/**/**/**/*
+      - deployTorrentApi.yml
+
+buildMainApi:
+    stage: build
+    image: docker:latest
+    services:
+        - docker:dind
+    script: 
+        - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN git.harknet.ml:5005
+        - docker build --pull -t $CONTAINER_MAIN_API_IMAGE ./apiGo/
+        - docker push $CONTAINER_MAIN_API_IMAGE
+    only:
+     changes:
+      - apiGo/**/**/**/*
+      - deployMainApi.yml
+
+deployWebServer:
+    stage: deploy
+    image: alpine
+    environment:
+        name: develop
+    script:
+        - apk add --no-cache curl
+        - curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        - chmod +x ./kubectl
+        - mv ./kubectl /usr/local/bin/kubectl
+        - kubectl config set-cluster HarkCluster --server="$KUBE_URL" --insecure-skip-tls-verify=true
+        - kubectl config set-credentials admin --username="$KUBE_USER" --password="$KUBE_PASSWORD"
+        - kubectl config set-context default --cluster=HarkCluster --user=admin
+        - kubectl config use-context default
+        # - kubectl create secret -n "$KUBE_NAMESPACE" docker-registry gitlab-registry --docker-server="$CI_REGISTRY" --docker-username="$CI_DEPLOY_USER" --docker-password="$CI_DEPLOY_PASSWORD" -o yaml --dry-run | sed 's/dockercfg/dockerconfigjson/g' | kubectl replace -n "$KUBE_NAMESPACE" --force -f -
+        - sed 's/_APP_NAME_/'"$CI_PROJECT_NAME"'/g; s/_VERSION_/'"$CI_COMMIT_SHA"'/g; s|_API_DOMAIN_NAME_|'"$API_DOMAIN_NAME"'|g; s|_FRONT_DOMAIN_NAME_|'"$FRONT_DOMAIN_NAME"'|g; s/_JWT_SECRET_/'"$JWT_SECRET"'/g' deployWebServer.yml > kubernetes.yml;
+        - kubectl apply -f kubernetes.yml
+    only:
+     changes:
+      - webServer/*/*
+      - front/**/**/**/*
+      - deployWebServer.yml
+
+deployTorrentApi:
+    stage: deploy
+    image: alpine
+    environment:
+        name: develop
+    script:
+        - apk add --no-cache curl
+        - curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        - chmod +x ./kubectl
+        - mv ./kubectl /usr/local/bin/kubectl
+        - kubectl config set-cluster HarkCluster --server="$KUBE_URL" --insecure-skip-tls-verify=true
+        - kubectl config set-credentials admin --username="$KUBE_USER" --password="$KUBE_PASSWORD"
+        - kubectl config set-context default --cluster=HarkCluster --user=admin
+        - kubectl config use-context default
+        - kubectl create secret -n "$KUBE_NAMESPACE" docker-registry gitlab-registry --docker-server="$CI_REGISTRY" --docker-username="$CI_DEPLOY_USER" --docker-password="$CI_DEPLOY_PASSWORD" -o yaml --dry-run | sed 's/dockercfg/dockerconfigjson/g' | kubectl replace -n "$KUBE_NAMESPACE" --force -f -
+        - sed 's|_APP_NAME_|'"$CI_PROJECT_NAME"'|g; s|_VERSION_|'"$CI_COMMIT_SHA"'|g; s|_MONGO_DB_NAME_|'"$MONGO_DB_NAME"'|g; s|_MONGO_DB_HOST_|'"$MONGO_DB_HOST"'|g; s|_JWT_SECRET_|'"$JWT_SECRET"'|g' deployTorrentApi.yml > kubernetes.yml;
+        - kubectl apply -f kubernetes.yml
+    only:
+     changes:
+      - torrentApiNode/**/**/**/*
+      - deployTorrentApi.yml
+
+deployMainApi:
+    stage: deploy
+    image: alpine
+    environment:
+        name: develop
+    script:
+        - apk add --no-cache curl
+        - curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        - chmod +x ./kubectl
+        - mv ./kubectl /usr/local/bin/kubectl 
+        - kubectl config set-cluster HarkCluster --server="$KUBE_URL" --insecure-skip-tls-verify=true
+        - kubectl config set-credentials admin --username="$KUBE_USER" --password="$KUBE_PASSWORD"
+        - kubectl config set-context default --cluster=HarkCluster --user=admin
+        - kubectl config use-context default
+        - kubectl create secret -n "$KUBE_NAMESPACE" docker-registry gitlab-registry --docker-server="$CI_REGISTRY" --docker-username="$CI_DEPLOY_USER" --docker-password="$CI_DEPLOY_PASSWORD" -o yaml --dry-run | sed 's/dockercfg/dockerconfigjson/g' | kubectl replace -n "$KUBE_NAMESPACE" --force -f -
+        - sed 's|_APP_NAME_|'"$CI_PROJECT_NAME"'|g; s|_VERSION_|'"$CI_COMMIT_SHA"'|g; s|_TMDB_APIKEY_|'"$TMDB_APIKEY"'|g; s|_MONGO_DB_NAME_|'"$MONGO_DB_NAME"'|g; s|_MONGO_DB_HOST_|'"$MONGO_DB_HOST"'|g; s|_API_DOMAIN_NAME_|'"$API_DOMAIN_NAME"'|g; s|_FRONT_DOMAIN_NAME_|'"$FRONT_DOMAIN_NAME"'|g; s|_GPLUS_SECRET_|'"$GPLUS_SECRET"'|g; s|_GPLUS_KEY_|'"$GPLUS_KEY"'|g; s|_FACEBOOK_SECRET_|'"$FACEBOOK_SECRET"'|g; s|_FACEBOOK_KEY_|'"$FACEBOOK_KEY"'|g; s|_API42_KEY_|'"$API42_KEY"'|g; s|_API42_SECRET_|'"$API42_SECRET"'|g; s|_MJ_APIKEY_PUBLIC_|'"$MJ_APIKEY_PUBLIC"'|g; s|_MJ_APIKEY_PRIVATE_|'"$MJ_APIKEY_PRIVATE"'|g; s|_SESSION_SECRET_|'"$SESSION_SECRET"'|g; s|_JWT_SECRET_|'"$JWT_SECRET"'|g' deployMainApi.yml > kubernetes.yml;
+        - cat kubernetes.yml
+        - kubectl apply -f kubernetes.yml
+    only:
+     changes:
+      - apiGo/**/**/**/*
+      - deployMainApi.yml
+
+deployMongodb:
+    stage: deploy
+    image: alpine
+    environment:
+        name: develop
+    script:
+        - apk add --no-cache curl
+        - curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+        - chmod +x ./kubectl
+        - mv ./kubectl /usr/local/bin/kubectl
+        - kubectl config set-cluster HarkCluster --server="$KUBE_URL" --insecure-skip-tls-verify=true
+        - kubectl config set-credentials admin --username="$KUBE_USER" --password="$KUBE_PASSWORD"
+        - kubectl config set-context default --cluster=HarkCluster --user=admin
+        - kubectl config use-context default
+        - kubectl create secret -n "$KUBE_NAMESPACE" docker-registry gitlab-registry --docker-server="$CI_REGISTRY" --docker-username="$CI_DEPLOY_USER" --docker-password="$CI_DEPLOY_PASSWORD" -o yaml --dry-run | sed 's/dockercfg/dockerconfigjson/g' | kubectl replace -n "$KUBE_NAMESPACE" --force -f -
+        - sed 's/_APP_NAME_/'"$CI_PROJECT_NAME"'/g; s/_VERSION_/'"$CI_COMMIT_SHA"'/g; s/_JWT_SECRET_/'"$JWT_SECRET"'/g' deployMongo.yml > kubernetes.yml;
+        - kubectl apply -f kubernetes.yml
+    only:
+     changes:
+      - deployMongo.yml

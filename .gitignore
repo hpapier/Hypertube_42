@@ -1,0 +1,12 @@
+/node_modules
+.DS_STORE
+/.history
+node_modules/
+movies/
+Public/
+dist/
+._mongodbData
+mongodbData/
+._.DS_Store
+_vendor
+._*
